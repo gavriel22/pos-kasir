@@ -1,0 +1,49 @@
+name: pos_kasir
+description: Aplikasi kasir offline-first dengan sinkronisasi ke cloud.
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.3.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # --- Database Lokal ---
+  isar: ^3.1.0+1
+  isar_flutter_libs: ^3.1.0+1   # binary Isar untuk Android/iOS/Desktop
+  path_provider: ^2.1.2         # untuk mendapatkan direktori dokumen
+
+  # --- Networking ---
+  # Tidak pakai http package — gunakan dart:io HttpClient langsung
+  # agar lebih ringan dan tidak ada dependensi tambahan
+
+  # --- State Management ---
+  # Pilih salah satu:
+  flutter_riverpod: ^2.5.1      # rekomendasi untuk proyek ini
+  # flutter_bloc: ^8.1.5        # alternatif jika tim lebih familiar BLoC
+
+  # --- Utilities ---
+  uuid: ^4.4.0                  # generate UUID v4 untuk localId
+  intl: ^0.19.0                 # format currency (Rupiah) dan tanggal
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  isar_generator: ^3.1.0+1     # code generator untuk Isar schema
+  build_runner: ^2.4.9         # runner untuk code generation
+  flutter_lints: ^4.0.0
+
+flutter:
+  uses-material-design: true
+
+  fonts:
+    - family: Inter
+      fonts:
+        - asset: assets/fonts/Inter_18pt-Regular.ttf
+        - asset: assets/fonts/Inter_18pt-Medium.ttf
+          weight: 500
+        - asset: assets/fonts/Inter_18pt-SemiBold.ttf
+          weight: 600
+        - asset: assets/fonts/Inter_18pt-Bold.ttf
+          weight: 700
