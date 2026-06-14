@@ -3,31 +3,33 @@
 import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:isar/isar.dart';
 
 import '../../core/app_theme.dart';
 import '../../models/product.dart';
 import '../../providers/cart_provider.dart';
 import 'widgets/pos_widgets.dart';
+import '../../core/isar_service.dart';
+import '../../repositories/sync_repository.dart';
+import '../../services/connectivity_service.dart';
 
 // ─── Temporary local providers (ganti dengan Isar stream di production) ──────
 
 final _selectedCategoryProvider = StateProvider<String?>((ref) => null);
 final _searchQueryProvider       = StateProvider<String>((ref) => '');
 
-final _dummyProductsProvider = Provider<List<Product>>((ref) {
-  const names = [
-    'Nasi Goreng Spesial','Mie Ayam Bakso','Es Teh Manis','Kopi Hitam',
-    'Ayam Bakar','Soto Ayam','Jus Alpukat','Pisang Goreng',
-    'Tempe Mendoan','Bakmi Goreng','Es Jeruk','Cappuccino',
-    'Gado-Gado','Rawon','Teh Tarik','Martabak Mini',
-  ];
-  return List.generate(16, (i) => Product()
-    ..localId   = 'prod-$i'
-    ..name      = names[i % names.length]
-    ..basePrice = 15000 + i * 3500
-    ..unit      = 'porsi'
-    ..stock     = i == 3 ? 0 : (i == 7 ? 3 : 50)
-    ..isActive  = true);
+final _productsStreamProvider = StreamProvider<List<Product>>((ref) async* {
+  final isar = await IsarService.instance.db;
+  yield* isar.products.filter().isActiveEqualTo(true).sortByName().watch(fireImmediately: true);
+});
+
+final _pendingSyncCountProvider = StreamProvider<int>((ref) {
+  return SyncRepository.instance.watchPendingSyncCount();
+});
+
+final _connectivityStatusProvider = StreamProvider<NetworkStatus>((ref) async* {
+  yield ConnectivityService.instance.current;
+  yield* ConnectivityService.instance.statusStream;
 });
 
 // ─── Category model ───────────────────────────────────────────────────────────
@@ -82,31 +84,36 @@ class _CashierPageState extends ConsumerState<CashierPage> {
 
 class _TopBar extends ConsumerWidget {
   @override
-  Widget build(BuildContext context, WidgetRef ref) => Container(
-    height: 56,
-    padding: const EdgeInsets.symmetric(horizontal: AppSpacing.xl),
-    decoration: const BoxDecoration(
-      color: AppColors.cardSurface,
-      border: Border(bottom: BorderSide(color: AppColors.oatMedium)),
-    ),
-    child: Row(children: [
-      Text('● Kasir', style: AppTextStyles.headingMedium.copyWith(
-        color: AppColors.sage, letterSpacing: -0.3)),
-      const SizedBox(width: AppSpacing.xs),
-      Text('Outlet Utama', style: AppTextStyles.bodySmall),
-      const Spacer(),
-      const SyncStatusBadge(pendingCount: 2, isOnline: true),
-      const SizedBox(width: AppSpacing.lg),
-      _LiveClock(),
-      const SizedBox(width: AppSpacing.lg),
-      Container(
-        width: 32, height: 32,
-        decoration: const BoxDecoration(color: AppColors.sageLight, shape: BoxShape.circle),
-        child: const Center(child: Text('A',
-          style: TextStyle(color: AppColors.sageDark, fontWeight: FontWeight.w700, fontSize: 14))),
+  Widget build(BuildContext context, WidgetRef ref) {
+    final pendingCount = ref.watch(_pendingSyncCountProvider).valueOrNull ?? 0;
+    final isOnline = ref.watch(_connectivityStatusProvider).valueOrNull == NetworkStatus.online;
+
+    return Container(
+      height: 56,
+      padding: const EdgeInsets.symmetric(horizontal: AppSpacing.xl),
+      decoration: const BoxDecoration(
+        color: AppColors.cardSurface,
+        border: Border(bottom: BorderSide(color: AppColors.oatMedium)),
       ),
-    ]),
-  );
+      child: Row(children: [
+        Text('● Kasir', style: AppTextStyles.headingMedium.copyWith(
+          color: AppColors.sage, letterSpacing: -0.3)),
+        const SizedBox(width: AppSpacing.xs),
+        Text('Outlet Utama', style: AppTextStyles.bodySmall),
+        const Spacer(),
+        SyncStatusBadge(pendingCount: pendingCount, isOnline: isOnline),
+        const SizedBox(width: AppSpacing.lg),
+        _LiveClock(),
+        const SizedBox(width: AppSpacing.lg),
+        Container(
+          width: 32, height: 32,
+          decoration: const BoxDecoration(color: AppColors.sageLight, shape: BoxShape.circle),
+          child: const Center(child: Text('A',
+            style: TextStyle(color: AppColors.sageDark, fontWeight: FontWeight.w700, fontSize: 14))),
+        ),
+      ]),
+    );
+  }
 }
 
 class _LiveClock extends StatefulWidget {
@@ -138,12 +145,7 @@ class _ProductPanel extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final selCat = ref.watch(_selectedCategoryProvider);
     final query  = ref.watch(_searchQueryProvider);
-    final all    = ref.watch(_dummyProductsProvider);
-
-    final filtered = all.where((p) =>
-      p.isActive &&
-      (query.isEmpty || p.name.toLowerCase().contains(query.toLowerCase()))
-    ).toList();
+    final productsAsync = ref.watch(_productsStreamProvider);
 
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
       // Search
@@ -184,27 +186,62 @@ class _ProductPanel extends ConsumerWidget {
 
       const SizedBox(height: AppSpacing.lg),
 
-      Padding(
-        padding: const EdgeInsets.symmetric(horizontal: AppSpacing.xl),
-        child: Text('${filtered.length} produk',
-          style: AppTextStyles.labelSmall.copyWith(letterSpacing: 0.4)),
-      ),
-      const SizedBox(height: AppSpacing.sm),
+      ...productsAsync.when(
+        data: (all) {
+          final filtered = all.where((p) =>
+            p.isActive &&
+            (selCat == null || p.categoryLocalId == selCat) &&
+            (query.isEmpty || p.name.toLowerCase().contains(query.toLowerCase()))
+          ).toList();
 
-      Expanded(
-        child: filtered.isEmpty
-          ? _Empty(isSearch: query.isNotEmpty)
-          : GridView.builder(
-              padding: const EdgeInsets.fromLTRB(AppSpacing.xl, AppSpacing.sm, AppSpacing.xl, AppSpacing.xxl),
-              gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
-                maxCrossAxisExtent: 180,
-                mainAxisSpacing: AppSpacing.md,
-                crossAxisSpacing: AppSpacing.md,
-                childAspectRatio: 0.75,
-              ),
-              itemCount: filtered.length,
-              itemBuilder: (_, i) => ProductCard(product: filtered[i]),
+          return [
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: AppSpacing.xl),
+              child: Text('${filtered.length} produk',
+                style: AppTextStyles.labelSmall.copyWith(letterSpacing: 0.4)),
             ),
+            const SizedBox(height: AppSpacing.sm),
+            Expanded(
+              child: filtered.isEmpty
+                ? _Empty(isSearch: query.isNotEmpty || selCat != null)
+                : GridView.builder(
+                    padding: const EdgeInsets.fromLTRB(AppSpacing.xl, AppSpacing.sm, AppSpacing.xl, AppSpacing.xxl),
+                    gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
+                      maxCrossAxisExtent: 180,
+                      mainAxisSpacing: AppSpacing.md,
+                      crossAxisSpacing: AppSpacing.md,
+                      childAspectRatio: 0.75,
+                    ),
+                    itemCount: filtered.length,
+                    itemBuilder: (_, i) => ProductCard(product: filtered[i]),
+                  ),
+            ),
+          ];
+        },
+        loading: () => [
+          const Padding(
+            padding: EdgeInsets.symmetric(horizontal: AppSpacing.xl),
+            child: Text('Memuat produk...', style: AppTextStyles.labelSmall),
+          ),
+          const SizedBox(height: AppSpacing.sm),
+          const Expanded(
+            child: Center(
+              child: CircularProgressIndicator(color: AppColors.sage),
+            ),
+          ),
+        ],
+        error: (err, stack) => [
+          const Padding(
+            padding: EdgeInsets.symmetric(horizontal: AppSpacing.xl),
+            child: Text('Gagal memuat produk', style: AppTextStyles.labelSmall),
+          ),
+          const SizedBox(height: AppSpacing.sm),
+          const Expanded(
+            child: Center(
+              child: Text('Terjadi kesalahan data', style: TextStyle(color: AppColors.terracotta)),
+            ),
+          ),
+        ],
       ),
     ]);
   }

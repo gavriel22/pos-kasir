@@ -3,7 +3,11 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'core/app_theme.dart';
 import 'ui/pages/cashier_page.dart';
 
+import 'services/connectivity_service.dart';
+
 void main() {
+  WidgetsFlutterBinding.ensureInitialized();
+  ConnectivityService.instance.start();
   runApp(
     const ProviderScope(
       child: PosApp(),
